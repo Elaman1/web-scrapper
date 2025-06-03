@@ -24,33 +24,7 @@ func Worker(ctx context.Context, id int, tasks <-chan Task, results chan<- Resul
 		}
 
 		log.Printf("%sНачало обработки %s", logPrefix, t.Url)
-		totalCnt := 0
-
-		resp, err := client.Get(t.Url)
-		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				err = fmt.Errorf("status not OK: %d", resp.StatusCode)
-				log.Printf("%sОшибка статуса %v", logPrefix, err)
-			} else {
-				scan := bufio.NewScanner(resp.Body)
-				for scan.Scan() {
-					select {
-					case <-ctx.Done():
-						log.Printf("%sОтмена чтения тела по контексту", logPrefix)
-						return
-					default:
-					}
-
-					totalCnt += len(scan.Bytes())
-				}
-
-				if scanErr := scan.Err(); scanErr != nil {
-					log.Printf("Ошибка сканирования %v", scanErr)
-					err = scanErr
-				}
-			}
-		}
+		totalCnt, err := getTotalCountBytesInUrl(ctx, t, client, logPrefix)
 
 		results <- Result{
 			Id:         t.Id,
@@ -61,4 +35,38 @@ func Worker(ctx context.Context, id int, tasks <-chan Task, results chan<- Resul
 		}
 		log.Printf("%sЗавершена обработка URL: %s", logPrefix, t.Url)
 	}
+}
+
+func getTotalCountBytesInUrl(ctx context.Context, t Task, client *http.Client, logPrefix string) (int, error) {
+	totalCnt := 0
+	resp, err := client.Get(t.Url)
+	if err == nil {
+		return totalCnt, err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("status not OK: %d", resp.StatusCode)
+		log.Printf("%sОшибка статуса %v", logPrefix, err)
+		return totalCnt, err
+	}
+
+	scan := bufio.NewScanner(resp.Body)
+	for scan.Scan() {
+		select {
+		case <-ctx.Done():
+			log.Printf("%sОтмена чтения тела по контексту", logPrefix)
+			return totalCnt, fmt.Errorf("отмена чтения тела по контексту")
+		default:
+		}
+
+		totalCnt += len(scan.Bytes())
+	}
+
+	if scanErr := scan.Err(); scanErr != nil {
+		log.Printf("Ошибка сканирования %v", scanErr)
+		err = scanErr
+	}
+
+	return totalCnt, err
 }
